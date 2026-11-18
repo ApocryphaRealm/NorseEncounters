@@ -202,9 +202,9 @@ namespace
     }
 
     std::mutex g_mx;
-    std::map<UObject*, int> g_extra;     // points waiting to spawn extra units once their own spawn is done
-    std::set<UObject*> g_removed;        // points told to spawn nothing
-    std::set<UObject*> g_respawn;        // points whose unit or fields changed: spawn again with the change
+    std::map<UObject*, int> g_extra;     // key-only, cleared at map load: points waiting to spawn extra units once their own spawn is done
+    std::set<UObject*> g_removed;        // key-only, cleared at map load: points told to spawn nothing
+    std::set<UObject*> g_respawn;        // key-only, cleared at map load: points whose unit or fields changed: spawn again with the change
     // Points the mission spawns later (AutoSpawn off - the encounter starts them): a removed one is emptied again each
     // time it spawns, and a held extra is spawned with the point's own unit. Checked after the
     // BeginPlay of a point and then every 0.1 s (real time) while any is watched - a unit the mission spawns later
@@ -505,6 +505,9 @@ class NorseEncounters : public RC::CppUserModBase
                 std::lock_guard lk(g_mx);
                 g_watchRemoved.clear();
                 g_watchExtra.clear();
+                g_extra.clear(); // a point whose BeginPlay-post never came: its address may be a new object next map
+                g_removed.clear();
+                g_respawn.clear();
             });
             RC::Unreal::Hook::RegisterEngineTickPreCallback([](RC::Unreal::UEngine*, float) {
                 {

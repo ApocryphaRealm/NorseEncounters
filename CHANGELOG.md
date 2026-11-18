@@ -12,3 +12,5 @@
   the point is watched and emptied each time it spawns. Before, Remove only switched AutoSpawn off, which those
   points already were, so the mission still brought the unit (found on SideMission_SeasideSkirmish).
 - Extra on such a point waits for the point's own spawn instead of putting the unit there at map load.
+- The per-point rule sets are cleared at each map load, so a point whose BeginPlay never finished cannot leave its
+  address behind for a new object on the next map (2026-11-18, cached-pointer source gate); built, not yet tested.
