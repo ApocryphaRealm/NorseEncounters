@@ -221,7 +221,7 @@ namespace
             if (!r.replace.empty())
             {
                 Field f = UnitField(point);
-                UObject* u = LoadByPath(r.replace.c_str());
+                UObject* u = LoadKept(r.replace.c_str());
                 if (!f) NRN_WARN("[%s] %s: no unit data object to replace", Narrow(r.label).c_str(), Narrow(name).c_str());
                 else if (!u) NRN_WARN("[%s] Replace %s: not found", Narrow(r.label).c_str(), Narrow(r.replace).c_str());
                 else

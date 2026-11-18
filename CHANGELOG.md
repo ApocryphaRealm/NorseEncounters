@@ -5,3 +5,6 @@
 - Rules in encounters/*.ini per map, unit, point, team and chance: Replace, Remove, Set, Extra.
 - A changed point spawns again with the change; a removed point is emptied.
 - Console enc.list, enc.reload.
+
+### Fixed (2026-11-18)
+- A Replace unit is kept loaded (root set).
