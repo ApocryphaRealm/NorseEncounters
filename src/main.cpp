@@ -21,6 +21,7 @@
 #include "NorseManifest.hpp"
 #include "NorseFilters.hpp"
 
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <set>
@@ -204,6 +205,14 @@ namespace
     std::map<UObject*, int> g_extra;     // points waiting to spawn extra units once their own spawn is done
     std::set<UObject*> g_removed;        // points told to spawn nothing
     std::set<UObject*> g_respawn;        // points whose unit or fields changed: spawn again with the change
+    // Points the mission spawns later (AutoSpawn off - the encounter starts them): a removed one is emptied again each
+    // time it spawns, and a held extra is spawned with the point's own unit. Checked after the
+    // BeginPlay of a point and then every 0.1 s (real time) while any is watched - a unit the mission spawns later
+    // reports no BeginPlay through UE4SS's callback (seen 2026-11-18), so the points are polled. Keyed by the
+    // object-array slot.
+    std::map<UObject*, int32_t> g_watchRemoved;
+    std::map<UObject*, std::pair<int32_t, int>> g_watchExtra;
+    ULONGLONG g_nextWatch = 0;
     int g_seen = 0, g_changed = 0;
 
     void ApplyTo(UObject* point)
@@ -290,6 +299,65 @@ namespace
         return n;
     }
 
+    int ActiveCount(UObject* point)
+    {
+        Buf b;
+        uint16_t ps = Reflect::Get().ParmsSizeOf(point, L"GetActiveSpawned");
+        if (ps != 16 || !Reflect::Get().Call(point, L"GetActiveSpawned", b.b, 16, sizeof(b.b)))
+        {
+            static bool told = false;
+            if (!told) NRN_WARN("GetActiveSpawned: parms %u (16 expected) or the call failed - a point's units cannot be counted", ps);
+            told = true;
+            return -1;
+        }
+        int32_t n = 0;
+        std::memcpy(&n, b.b + 8, 4);
+        return n;
+    }
+
+    // every 0.1 s while any point is watched: the ones the mission has just spawned
+    void CheckWatched()
+    {
+        std::vector<std::pair<UObject*, int32_t>> rem;
+        std::vector<std::pair<UObject*, std::pair<int32_t, int>>> ext;
+        {
+            std::lock_guard lk(g_mx);
+            rem.assign(g_watchRemoved.begin(), g_watchRemoved.end());
+            ext.assign(g_watchExtra.begin(), g_watchExtra.end());
+        }
+        for (auto& [p, ix] : rem)
+        {
+            if (!Alive(p, ix))
+            {
+                std::lock_guard lk(g_mx);
+                g_watchRemoved.erase(p);
+                continue;
+            }
+            if (ActiveCount(p) > 0)
+            {
+                int n = DestroySpawned(p);
+                NRN_INFO("%s: the mission spawned it - emptied again (%d unit(s) removed)", Narrow(ShortName(PathOf(p))).c_str(), n);
+            }
+        }
+        for (auto& [p, v] : ext)
+        {
+            bool gone = !Alive(p, v.first);
+            if (!gone && ActiveCount(p) <= 0) continue;
+            {
+                std::lock_guard lk(g_mx);
+                g_watchExtra.erase(p);
+            }
+            if (gone) continue;
+            std::string name = Narrow(ShortName(PathOf(p)));
+            for (int i = 0; i < v.second; ++i)
+            {
+                UObject* a = SpawnOnce(p);
+                if (a) NRN_INFO("%s: spawned by the mission - extra unit %d/%d with it (%s)", name.c_str(), i + 1, v.second, Narrow(ShortName(PathOf(a))).c_str());
+                else NRN_WARN("%s: extra unit %d/%d - SpawnActor gave nothing", name.c_str(), i + 1, v.second);
+            }
+        }
+    }
+
     void AfterBeginPlay(UObject* point)
     {
         bool removed = false, respawn = false;
@@ -308,7 +376,11 @@ namespace
         if (removed)
         {
             int n = DestroySpawned(point);
-            NRN_INFO("%s: emptied (%d unit(s) removed)", name.c_str(), n);
+            {
+                std::lock_guard lk(g_mx);
+                g_watchRemoved[point] = IndexOf(point);
+            }
+            NRN_INFO("%s: emptied (%d unit(s) removed); watched in case the mission spawns it later", name.c_str(), n);
             return;
         }
         if (respawn)
@@ -321,6 +393,14 @@ namespace
                 else NRN_WARN("%s: %d unit(s) removed, but SpawnActor gave nothing", name.c_str(), n);
             }
             // n == 0: the point had not spawned yet - it will spawn with the change
+        }
+        if (extra && ActiveCount(point) == 0)
+        {
+            // the point has not spawned its own unit yet (the mission starts it later): the extras wait for it
+            std::lock_guard lk(g_mx);
+            g_watchExtra[point] = {IndexOf(point), extra};
+            NRN_INFO("%s: not spawned yet - %d extra unit(s) held until the mission spawns it", name.c_str(), extra);
+            return;
         }
         for (int i = 0; i < extra; ++i)
         {
@@ -422,6 +502,26 @@ class NorseEncounters : public RC::CppUserModBase
             RC::Unreal::Hook::RegisterInitGameStatePostCallback([](RC::Unreal::AGameModeBase*) {
                 NRN_INFO("map load: %d spawn point(s) looked at, %d changed before it", g_seen, g_changed);
                 g_seen = g_changed = 0;
+                std::lock_guard lk(g_mx);
+                g_watchRemoved.clear();
+                g_watchExtra.clear();
+            });
+            RC::Unreal::Hook::RegisterEngineTickPreCallback([](RC::Unreal::UEngine*, float) {
+                {
+                    std::lock_guard lk(g_mx);
+                    if (g_watchRemoved.empty() && g_watchExtra.empty()) return;
+                }
+                ULONGLONG now = GetTickCount64();
+                if (now < g_nextWatch) return;
+                g_nextWatch = now + 100;
+                try
+                {
+                    CheckWatched();
+                }
+                catch (...)
+                {
+                    NRN_ERROR("watched spawn point pass threw");
+                }
             });
             RC::Unreal::Hook::RegisterProcessConsoleExecCallback(
                     [](UObject*, const wchar_t* cmd, RC::Unreal::FOutputDevice&, UObject*) -> bool {

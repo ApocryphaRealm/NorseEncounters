@@ -8,3 +8,7 @@
 
 ### Fixed (2026-11-18)
 - A Replace unit is kept loaded (root set).
+- Remove now holds on a point the mission spawns later (AutoSpawn off, as on every enemy point of a real mission):
+  the point is watched and emptied each time it spawns. Before, Remove only switched AutoSpawn off, which those
+  points already were, so the mission still brought the unit (found on SideMission_SeasideSkirmish).
+- Extra on such a point waits for the point's own spawn instead of putting the unit there at map load.
