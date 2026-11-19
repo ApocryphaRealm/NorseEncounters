@@ -34,3 +34,7 @@ start, so reload the map afterwards). NorseDevTools runs `enc.reload` when a fil
 
 0.1.0 tested in game on the combat test map (TEST-RESULT-0.1.0.txt). Not yet seen: a mission's own encounter maps, and
 whether Norse's mission scripts that address a point's spawned unit by reference cope with a respawned one.
+
+## Licence
+
+GPL-3.0-or-later (see LICENSE).
